@@ -433,6 +433,7 @@ class EVA:
         method: typing.Literal["BM"],
         extremes_type: typing.Literal["high", "low"] = "high",
         *,
+        threshold: typing.Optional[float] = None,                        # APN added
         block_size: str = "365.2425D",
         errors: typing.Literal["raise", "ignore", "coerce"] = "raise",
         min_last_block: typing.Optional[float] = None,
@@ -1011,6 +1012,7 @@ class EVA:
             if self.extremes_method == "BM" and distribution_name not in [
                 "genextreme",
                 "gumbel_r",
+                "weibull_min",    # !!!!!!!!!!!!!!!!!!!!!APN added 
             ]:
                 warnings.warn(
                     message=(
@@ -1024,6 +1026,7 @@ class EVA:
             elif self.extremes_method == "POT" and distribution_name not in [
                 "genpareto",
                 "expon",
+                "weibull_min",   # !!!!!!!!!!!!!!!!!!!!!APN added 
             ]:
                 warnings.warn(
                     message=(
@@ -1036,7 +1039,7 @@ class EVA:
                 )
 
         # Freeze (fix) location parameter for genpareto/expon distributions
-        if distribution_kwargs is None and distribution_name in ["genpareto", "expon"]:
+        if distribution_kwargs is None and distribution_name in ["genpareto", "expon", "weibull_min","genextreme"]:  #!!!!!!!!!!!!!!!!!!!!!APN added 
             distribution_kwargs = {
                 "floc": self.extremes_kwargs.get(
                     "threshold", self.extremes_transformer.transformed_extremes.min()
@@ -1230,7 +1233,10 @@ class EVA:
         # Calculate rate of extreme events
         # as number of extreme events per `return_period_size`
         if self.extremes_method == "BM":
-            extremes_rate = return_period_size / self.extremes_kwargs["block_size"]
+            #extremes_rate = return_period_size / self.extremes_kwargs["block_size"]
+            n_periods = (self.data.index[-1] - self.data.index[0]) / return_period_size      # orginal, not account for large break between measurements
+            extremes_rate = len(self.extremes) / n_periods
+            
         elif self.extremes_method == "POT":
             n_periods = (self.data.index[-1] - self.data.index[0]) / return_period_size
             extremes_rate = len(self.extremes) / n_periods

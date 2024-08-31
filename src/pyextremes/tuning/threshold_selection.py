@@ -455,6 +455,7 @@ def _calculate_return_value(
     args: typing.Tuple[
         pd.Series,  # ts (time series)
         float,  # return_period
+        typing.Literal["BM", "POT"],   # added by APN   
         typing.Union[str, pd.Timedelta],  # return_period_size
         float,  # threshold
         typing.Union[str, pd.Timedelta],  # r
@@ -468,6 +469,7 @@ def _calculate_return_value(
     (
         ts,
         return_period,
+        method,            # added by APN  
         return_period_size,
         threshold,
         r,
@@ -478,15 +480,38 @@ def _calculate_return_value(
         n_samples,
     ) = args
     model = EVA(data=ts)
+    ''' # Original         
     model.get_extremes(
-        method="POT",
+        method="POT",                                                    
         extremes_type=extremes_type,
         threshold=threshold,
         r=r,
     )
+    '''
+    # ***********************************************************************
+    # Changed by APN   
+    # ***********************************************************************    
+    if method=="POT":
+        model.get_extremes(
+        method="POT",                                                    
+        extremes_type=extremes_type,
+        threshold=threshold,
+        r=r,
+        )
+    else:
+        model.get_extremes(
+        method="BM",                                                    
+        extremes_type=extremes_type,
+        threshold=threshold,
+        block_size=r,
+        errors='ignore',
+        )
+
+
     model.fit_model(
         model="MLE",
         distribution=distribution,
+        distribution_kwargs={"floc": threshold},                           # added by APN 
     )
     # TODO - this is a hack to avoid spawning nested subprocesses
     _n_samples = n_samples % 10
@@ -504,18 +529,43 @@ def _calculate_return_value(
         alpha=alpha,
         n_samples=n_samples,
     )
+
+    ##   calcualte RR values                    Added by APN
+    #  ***************************************************************
+    # Get observed return values
+    from pyextremes.extremes import get_return_periods
+    observed_return_values = get_return_periods(
+            ts=model.data,
+            extremes=model.extremes,
+            extremes_method=model.extremes_method,
+            extremes_type=model.extremes_type,
+            block_size=model.extremes_kwargs.get("block_size", None),
+            return_period_size=return_period_size,
+    )
+
+    observed = observed_return_values.loc[:, model.extremes.name].values
+    theoretical = model.extremes_transformer.transform(
+        model.model.isf(
+            observed_return_values.loc[:, "exceedance probability"].values
+        )
+    )
+    pearsonr, p_value = scipy.stats.pearsonr(theoretical, observed)
+    #*****************************************************************
+    
     return {
         "distribution_name": distribution_name,
         "threshold": threshold,
         "rv": rv,
         "cil": cil,
         "ciu": ciu,
+        "R2": pearsonr,           # added by APN
     }
 
 
 def plot_return_value_stability(
     ts: pd.Series,
     return_period: float,
+    method: typing.Literal["BM", "POT"]="POT",                           # Added by APN to also testing Block Method       
     return_period_size: typing.Union[str, pd.Timedelta] = "365.2425D",
     thresholds=None,
     r: typing.Union[str, pd.Timedelta] = "24h",
@@ -528,7 +578,7 @@ def plot_return_value_stability(
     ax: typing.Optional[plt.Axes] = None,
     figsize: tuple = (8, 5),
     progress: bool = False,
-) -> plt.Axes:
+) -> [plt.Axes, float]:                  # modified by APN, original:  plt.Axes:
     """
     Plot return value stability plot for given threshold values.
 
@@ -625,6 +675,7 @@ def plot_return_value_stability(
             typing.Tuple[
                 pd.Series,  # ts (time series)
                 float,  # return_period
+                typing.Literal["BM", "POT"],    # ********************************* added by APN ************************      
                 typing.Union[str, pd.Timedelta],  # return_period_size
                 float,  # threshold
                 typing.Union[str, pd.Timedelta],  # r
@@ -643,6 +694,7 @@ def plot_return_value_stability(
                 yield (
                     ts,
                     return_period,
+                    method,                 # added by APN   
                     return_period_size,
                     threshold,
                     r,
@@ -714,7 +766,25 @@ def plot_return_value_stability(
                     alpha=0.25,
                     zorder=(i + 1) * 5,
                 )
+                
+            # ************************************************************************************
+            # compare RR for different threshold
+            # ************************************************************************************
+            axes2 = ax.twinx()   
+            axes2.plot(
+                df.loc[:, "threshold"],
+                df.loc[:, "R2"]*100,                   # .apply(lambda x: x[0]) added by APN
+                color=color,
+                lw=2,
+                ls=":",
+                zorder=(i + 3) * 5,
+            )
 
+        axes2.set_ylabel("$R^2$")
+
+        # return threshold with maximum R2
+        max_value_index=df.loc[:, "R2"].idxmax()
+        threshold= df.loc[max_value_index, 'threshold']
         # Plot legend
         ax.legend(frameon=True, framealpha=0.9)
 
@@ -722,7 +792,7 @@ def plot_return_value_stability(
         ax.set_xlabel("Threshold")
         ax.set_ylabel("Return value")
 
-        return ax
+        return ax, threshold, df.loc[:, "R2"],df.loc[:, "rv"]  # return ax
 
 
 def plot_aic_scores(
@@ -828,6 +898,10 @@ def plot_aic_scores(
         for i, (distribution_name, df) in enumerate(
             results.groupby("distribution_name")
         ):
+            #  Added by APN, Plot central estimate of return values
+            #color = pyextremes_rc["axes.prop_cycle"].by_key()["color"][i]
+            
+            
             ax.plot(
                 df.loc[:, "threshold"],
                 df.loc[:, "aic"],

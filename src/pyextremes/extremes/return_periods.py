@@ -109,7 +109,9 @@ def get_return_periods(
 
     # Calculate rate of extreme events as number of events per one return period
     if extremes_method == "BM":
-        extremes_rate = return_period_size / block_size
+        #extremes_rate = return_period_size / block_size
+        n_periods = (ts.index.max() - ts.index.min()) / return_period_size      # Changed by Yugao to enable threshold for BM, 2023/11/06
+        extremes_rate = len(extremes) / n_periods                               # And maybe gap betweeen measurements
     elif extremes_method == "POT":
         n_periods = (ts.index.max() - ts.index.min()) / return_period_size
         extremes_rate = len(extremes) / n_periods
